@@ -1,0 +1,6 @@
+src/__pycache__/
+**/__pycache__/
+*.pyc
+output/screenshots/
+output/checkpoint.jsonl
+data/
