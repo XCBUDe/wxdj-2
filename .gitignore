@@ -3,4 +3,5 @@ src/__pycache__/
 *.pyc
 output/screenshots/
 output/checkpoint.jsonl
+output/checkpoint_full.jsonl
 data/
