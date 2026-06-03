@@ -6,46 +6,51 @@
 
 ## 0. 当前状态 & 复跑指南（新会话先看这里）
 
-### 进展快照（截至最近一轮）
-- **报价**：已接入真实数据源 `data/standards.json`（奇瑞全量车型库，191 款，过滤 5 款「报价单无此车型」后 **186 款 / 42 车系**）。
-  裸车价 = `guidePrice - discount`，指导价 = `guidePrice`。
-- **样本经销商**：奇瑞清远冠荣体验中心，dealerId = **2045891**，报价页 = `https://dealer.autohome.com.cn/2045891/price.html`。
-- **Excel 输出**：`output/result_qingyuan.xlsx`，186 行车型 + 经销商级字段纵向合并，已验证 ✅。
-- **截图**：Playwright 真实截图代码 **已就绪**，但**当前云端环境网络白名单屏蔽了 autohome**（"Host not in allowlist"）→ 截图这一步在本会话**无法完成**。已加拦截页检测，绝不嵌入假图。
+### 进展快照（截至本轮 2026-06-03）
 
-### 唯一未完成项 = 真实头图截图，解法如下
+#### ✅ 已完成（本轮修复后验证）
+- **网络白名单**：autohome 已可访问（HTTP 200，93KB 正文），截图正常（338KB PNG）。
+- **Playwright 线程安全**：修复跨线程 greenlet 错误，各 worker 自建浏览器。
+- **经销商名称**：改从 `page.title()` 正则提取，100% 稳定。验证：`奇瑞清远冠荣体验中心` ✓
+- **报价提取**：改为文本行解析（`_parse_pricing_from_text`），兼容新版 Tailwind 页面。验证：22 条（9 车系）实时抓取 ✓
+- **软文日期**：正则扫描 body text。验证：`2026-05-17` ✓
+- **头图截图**：viewport clip fallback，338KB，正常渲染页面截图 ✓
+- **Excel 输出**：22 行车型 + 经销商级合并，已保存 `output/result_test.xlsx` ✓
+- **`standards.json` 缺失容错**：`load_pricing()` 现在返回空列表而非抛异常。
 
-**第 1 步：开网络白名单**（环境设置 → 网络策略）。需放行：
-```
-dealer.autohome.com.cn
-www.autohome.com.cn
-*.autohome.com.cn
-*.autoimg.cn          # 头图/车图CDN，不加图会裂
-```
-⚠️ 网络策略在**环境创建时生效**，改完通常要**新开一个 Web 会话**才带上新策略。参考：https://code.claude.com/docs/en/claude-code-on-the-web
+#### ⏳ 待完成（等待 standards.json）
+- **`--sample` 模式**：需上传 `data/standards.json` 后运行：
+  ```bash
+  python run.py --sample --output output/result_qingyuan.xlsx
+  ```
+  预期：186 行车型 + 真实头图截图（因网络已通）。
 
-**第 2 步：复跑**（白名单生效的新会话里）
+### 复跑指南（新会话先看这里）
 ```bash
+python bootstrap.py           # 还原代码（若仓库为空）
 pip install -r requirements.txt
-python -m playwright install chromium   # 若 /opt/pw-browsers 已有可跳过
+# 若 standards.json 已就绪：
 python run.py --sample --output output/result_qingyuan.xlsx
+# 验证联网单店（无需 standards.json）：
+python run.py --test 2045891 --output output/result_test.xlsx
 ```
-- `--sample`：报价用 `standards.json` 真实数据；截图自动联网截 2045891 真实头图。
-- 代码会自检：截到的若是拦截页/空白页，判失败留空（见 `src/detail.py::_is_blocked_page`）。
-- 成功标志：日志出现 `[截图] 成功 ...`，`output/screenshots/2045891.png` 是真实店铺页，Excel「头图截图」列有图。
 
-**验证截图是否真实**：打开 png，应是汽车之家清远冠荣首页顶部（导航+banner+Tab+焦点图+软文列表+门店卡），而非 "Host not in allowlist"。
+成功标志（`--sample`）：
+- 日志：`[截图] 成功 output/screenshots/2045891.png`
+- 日志：`[OK] 2045891 奇瑞清远冠荣体验中心 / 186车型`
+- 文件：`output/result_qingyuan.xlsx`（186 行，头图截图嵌入）
 
 ### 待办（按优先级）
-1. [ ] 开白名单 → 复跑出**真图 + 186 车型**的最终 Excel。
-2. [ ] 联网后校准报价页 DOM 选择器（`src/detail.py` 顶部 `SEL_SERIES_BLOCK` 等），让直接爬 price.html 也能拿全（目前报价走 JSON，爬取逻辑未经真实页面验证）。
-3. [ ] 软文「最新发布日期」联网校准（首页右侧资讯列表）。
-4. [ ] 扩展到广东/福建/海南三省全量（Step1 经销商列表接口需联网探源）。
-5. [ ] 启动器封装优化（用户要求：在输出合格后再做，暂缓）。
+1. [x] 网络白名单 → autohome 已通。
+2. [x] 联网验证报价页结构 → 文本解析正常（22 条实时结果）。
+3. [x] 软文日期联网验证 → 2026-05-17 ✓。
+4. [ ] 上传 `data/standards.json` → 运行 `--sample` 得 186 行最终 Excel。
+5. [ ] 扩展到广东/福建/海南三省全量（Step1 经销商列表接口需探源）。
+6. [ ] 启动器封装优化（在输出合格后再做，暂缓）。
 
 ### git
-- 开发分支：`claude/inspiring-pascal-eXO87`，所有提交已落本地。
-- 推送到 `XCBUDe/wxdj-2` 持续 403（环境 git 写入权限未放开），需在环境设置开启后再 push。
+- 开发分支：`claude/kind-knuth-y3Dga`，所有提交已落本地（commit: 2f7d766）。
+- 推送到 `XCBUDe/wxdj-2` 持续 403（环境 git 写入权限未放开，GitHub MCP 同样 403）。
 
 ---
 
