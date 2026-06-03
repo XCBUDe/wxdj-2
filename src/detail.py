@@ -186,19 +186,26 @@ def _scroll_to_bottom(page: Page, pause: float = 0.8, max_rounds: int = 15):
 
 def _expand_all_series(page: Page):
     """点击所有「展开」按钮，使折叠车型全部可见。
-    新版页面按钮文字为「展开 X 款符合条件的车型」，用 text= 定位。
+    用 JS 直接 click 绕过可见性/遮挡检测，确保全部车系展开。
     """
-    try:
-        btns = page.locator("text=展开").all()
-        for btn in btns:
-            try:
-                if btn.is_visible(timeout=500):
-                    btn.click(timeout=1000)
-                    time.sleep(0.3)
-            except Exception:
-                pass
-    except Exception:
-        pass
+    for _ in range(3):
+        try:
+            clicked = page.evaluate(
+                """() => {
+                    let n = 0;
+                    document.querySelectorAll('button').forEach(btn => {
+                        if (btn.textContent.includes('展开')) {
+                            btn.click(); n++;
+                        }
+                    });
+                    return n;
+                }"""
+            )
+            if clicked == 0:
+                break
+            time.sleep(0.8)
+        except Exception:
+            break
 
 
 # ─────────────────────────────────────────────────────────────────────────
