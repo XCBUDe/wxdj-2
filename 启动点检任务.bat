@@ -18,7 +18,7 @@ if errorlevel 1 (
 )
 
 echo [1/2] Installing dependencies...
-pip install -r requirements.txt -q
+python -m pip install -r requirements.txt -q
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies. Check network connection.
     pause
