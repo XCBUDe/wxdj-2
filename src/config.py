@@ -5,8 +5,8 @@
 # 奇瑞品牌 ID（autohome内部ID，如有变化可在此修改）
 CHERY_BRAND_ID = 17
 
-# 无头浏览器可执行文件
-CHROMIUM_PATH = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+# 无头浏览器启动参数（不指定 executable_path，让 Playwright 用自己安装的 Chromium）
+CHROMIUM_PATH = None
 CHROMIUM_ARGS = [
     "--no-sandbox",
     "--disable-dev-shm-usage",

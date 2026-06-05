@@ -337,11 +337,10 @@ def fetch_dealer_detail(dealer: dict, features: dict, browser=None) -> dict:
     try:
         if _own_browser:
             pw_ctx = sync_playwright().start()
-            browser = pw_ctx.chromium.launch(
-                headless=True,
-                executable_path=CHROMIUM_PATH,
-                args=CHROMIUM_ARGS,
-            )
+            launch_kwargs = dict(headless=True, args=CHROMIUM_ARGS)
+            if CHROMIUM_PATH:
+                launch_kwargs["executable_path"] = CHROMIUM_PATH
+            browser = pw_ctx.chromium.launch(**launch_kwargs)
 
         ctx = browser.new_context(
             viewport=VIEWPORT,

@@ -3,9 +3,7 @@ cd /d "%~dp0"
 
 echo ============================================================
 echo   Autohome Chery Dealer Inspection Tool
-echo   Before running: open task.py, set the two paths at top:
-echo     dealer_list_xlsx  ^<-- dealer list .xlsx
-echo     standard_xlsx     ^<-- pricing standard .xlsx
+echo   Put your two xlsx files in this folder, then run.
 echo ============================================================
 echo.
 
@@ -17,7 +15,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/2] Installing dependencies...
+echo [1/3] Installing Python dependencies...
 python -m pip install -r requirements.txt -q
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies. Check network connection.
@@ -25,7 +23,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [2/2] Starting task...
+echo [2/3] Installing Chromium browser (first run only, ~150MB)...
+python -m playwright install chromium
+if errorlevel 1 (
+    echo [ERROR] Failed to install Chromium. Check network connection.
+    pause
+    exit /b 1
+)
+
+echo [3/3] Starting crawl...
 echo.
 python task.py
 
