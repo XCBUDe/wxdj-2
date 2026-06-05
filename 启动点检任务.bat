@@ -15,22 +15,26 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/3] Installing Python dependencies...
-python -m pip install -r requirements.txt -q
+echo [1/3] Installing Python dependencies (using China mirror)...
+python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
-    echo [ERROR] Failed to install dependencies. Check network connection.
-    pause
-    exit /b 1
+    echo.
+    echo [WARN] Mirror failed, trying official PyPI...
+    python -m pip install -r requirements.txt
 )
 
+echo.
 echo [2/3] Installing Chromium browser (first run only, ~150MB)...
+set PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 python -m playwright install chromium
 if errorlevel 1 (
-    echo [ERROR] Failed to install Chromium. Check network connection.
-    pause
-    exit /b 1
+    echo.
+    echo [WARN] Mirror failed, trying default download host...
+    set PLAYWRIGHT_DOWNLOAD_HOST=
+    python -m playwright install chromium
 )
 
+echo.
 echo [3/3] Starting crawl...
 echo.
 python task.py
