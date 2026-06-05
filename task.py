@@ -16,13 +16,12 @@
 # =============================================================================
 TASK_CONFIG = {
     # ── 输入 ─────────────────────────────────────────────────────────────
-    # 经销商名单：Sheet1，第4行起，B列=简称，C列=uid（汽车之家经销商ID）
-    "dealer_list_xlsx": "/root/.claude/uploads/97740e16-e0aa-4c55-a8e7-e869472d0cfa/5b9dab83-H______________.xlsx",
-
-    # 报价标准：含「网销平台报价建议表」sheet
-    # E列=市场价格，F列=对应媒体车型，H列=2026.6.2起现金优惠金额
-    # 若不需要报价对比，设为 None 或空字符串
-    "standard_xlsx": "",   # ← 填入报价标准文件路径
+    # 留空即可！程序会自动识别本文件夹里的 xlsx：
+    #   文件名含「检核 / 名单 / uid」→ 当作经销商名单
+    #   文件名含「报价 / 标准」      → 当作报价标准
+    # 如需手动指定，把文件名填进下面引号里（不要删掉键名）。
+    "dealer_list_xlsx": "",   # 经销商名单（留空=自动识别）
+    "standard_xlsx":    "",   # 报价标准  （留空=自动识别 / 不核价就留空）
 
     # ── 输出 ─────────────────────────────────────────────────────────────
     "output_dir":       "output",
@@ -393,9 +392,37 @@ def run_zip_screenshots(dealers: list[dict], cfg: dict):
         print(f"  无截图经销商({len(missing)}家): {', '.join(missing)}")
 
 
+def _autodetect_inputs(cfg):
+    """名单/标准路径为空或不存在时，自动扫描脚本所在文件夹里的 xlsx。"""
+    here = Path(__file__).resolve().parent
+    candidates = [
+        p for p in here.glob("*.xlsx")
+        if not p.name.startswith("~$")        # 排除 Excel 临时锁文件
+        and "result" not in p.name.lower()    # 排除我们自己的输出
+    ]
+
+    def _resolve(key, keywords):
+        val = (cfg.get(key) or "").strip()
+        if val and Path(val).exists():
+            return                            # 用户已填且文件存在
+        for p in candidates:
+            if any(kw in p.name for kw in keywords):
+                cfg[key] = str(p)
+                print(f"[自动识别] {key} → {p.name}")
+                return
+
+    _resolve("dealer_list_xlsx", ["检核", "名单", "uid", "经销商"])
+    _resolve("standard_xlsx",    ["报价", "标准", "建议"])
+
+
 # ── 主流程 ──────────────────────────────────────────────────────────────
 def main():
     cfg = TASK_CONFIG
+    _autodetect_inputs(cfg)
+    if not (cfg.get("dealer_list_xlsx") and Path(cfg["dealer_list_xlsx"]).exists()):
+        print("\n[错误] 没找到经销商名单 xlsx。")
+        print("       请把名单文件（文件名建议含『检核』或『名单』）放到本文件夹后重跑。")
+        return
     Path(cfg["output_dir"]).mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
