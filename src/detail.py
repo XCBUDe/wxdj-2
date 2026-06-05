@@ -307,6 +307,34 @@ def _extract_pricing_from_page(page: Page) -> list[dict]:
     return _parse_pricing_from_text(body)
 
 
+def _launch_browser(pw_ctx):
+    """按优先级启动浏览器：
+    1. 配置的 CHROMIUM_PATH（如手动指定）
+    2. Playwright 自带 Chromium（playwright install 下载的）
+    3. 系统已安装的 Edge / Chrome（无需下载，Windows 自带 Edge）
+    """
+    base = dict(headless=True, args=CHROMIUM_ARGS)
+    attempts = []
+    if CHROMIUM_PATH:
+        attempts.append(("指定路径", dict(base, executable_path=CHROMIUM_PATH)))
+    attempts.append(("自带Chromium", dict(base)))
+    attempts.append(("系统Edge", dict(base, channel="msedge")))
+    attempts.append(("系统Chrome", dict(base, channel="chrome")))
+
+    last_err = None
+    for label, kwargs in attempts:
+        try:
+            browser = pw_ctx.chromium.launch(**kwargs)
+            print(f"    [浏览器] 使用 {label}")
+            return browser
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(
+        "无法启动任何浏览器（已尝试 自带Chromium / 系统Edge / 系统Chrome）。"
+        f" 最后错误: {last_err}"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 主采集函数
 # ─────────────────────────────────────────────────────────────────────────
@@ -337,10 +365,7 @@ def fetch_dealer_detail(dealer: dict, features: dict, browser=None) -> dict:
     try:
         if _own_browser:
             pw_ctx = sync_playwright().start()
-            launch_kwargs = dict(headless=True, args=CHROMIUM_ARGS)
-            if CHROMIUM_PATH:
-                launch_kwargs["executable_path"] = CHROMIUM_PATH
-            browser = pw_ctx.chromium.launch(**launch_kwargs)
+            browser = _launch_browser(pw_ctx)
 
         ctx = browser.new_context(
             viewport=VIEWPORT,
