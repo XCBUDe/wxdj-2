@@ -442,8 +442,30 @@ def run_zip_screenshots(dealers, cfg):
 # 主流程
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _apply_external_config(cfg):
+    """控制面板接口：若环境变量 WXDJ_CONFIG_JSON 指向 JSON 文件，则覆盖 TASK_CONFIG。
+    不影响原有命令行直接运行方式（无该环境变量时本函数不做任何事）。"""
+    import os
+    p = os.environ.get("WXDJ_CONFIG_JSON", "").strip()
+    if not p or not Path(p).exists():
+        return
+    try:
+        with open(p, encoding="utf-8") as f:
+            ov = json.load(f)
+    except Exception as e:
+        print(f"[控制面板] 外部配置读取失败，忽略: {e}")
+        return
+    for k, v in ov.items():
+        if k == "features" and isinstance(v, dict):
+            cfg.setdefault("features", {}).update(v)
+        else:
+            cfg[k] = v
+    print(f"[控制面板] 已加载外部配置: {p}")
+
 def main():
     cfg = TASK_CONFIG
+    _apply_external_config(cfg)
     _autodetect_inputs(cfg)
 
     if not (cfg.get("dealer_list_xlsx") and
