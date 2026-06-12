@@ -46,6 +46,14 @@ TASK_CONFIG = {
 }
 # =============================================================================
 
+# ── vendor 离线依赖引导：pip 装不上时自动用随包附带的 vendor/ ──
+import sys as _sys
+from pathlib import Path as _Path
+_vendor = _Path(__file__).resolve().parent / "vendor"
+if _vendor.is_dir() and str(_vendor) not in _sys.path:
+    _sys.path.append(str(_vendor))   # append：优先用已正常安装的版本
+del _sys, _Path, _vendor
+
 import re, sys, time, json, zipfile, collections
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -110,66 +118,104 @@ def _autodetect_inputs(cfg):
     _resolve("standard_xlsx",    ["报价", "标准", "建议"])
 
 
-def _find_column(ws, header_row: int, *keywords) -> int | None:
-    """在指定行扫描表头，返回第一个含任意关键词的列号（1-based），找不到返回 None。"""
+def _find_column(ws, header_row: int, keywords, exclude=()) -> int | None:
+    """在表头行找列：表头去空格后含任一关键词、且不含任何排除词。"""
+    if isinstance(keywords, str):
+        keywords = (keywords,)
     for col in range(1, ws.max_column + 1):
-        v = str(ws.cell(header_row, col).value or "")
+        v = re.sub(r"\s+", "", str(ws.cell(header_row, col).value or ""))
+        if not v:
+            continue
+        if any(ex in v for ex in exclude):
+            continue
         if any(kw in v for kw in keywords):
             return col
     return None
 
 
-def _find_header_row(ws, uid_keywords=("易车UID", "易车uid", "易车ID", "易车id")) -> int:
-    """扫描前10行找含易车UID关键词的表头行，返回行号。"""
-    for r in range(1, 11):
+def _find_header_row(ws, uid_keywords=("易车UID", "易车uid", "易车Uid",
+                                         "易车ID", "易车id", "易车编号")) -> int | None:
+    """扫描前20行找含易车UID关键词的表头行（去空格匹配），找不到返回 None。"""
+    for r in range(1, min(20, ws.max_row) + 1):
         for c in range(1, ws.max_column + 1):
-            v = str(ws.cell(r, c).value or "")
+            v = re.sub(r"\s+", "", str(ws.cell(r, c).value or ""))
             if any(kw in v for kw in uid_keywords):
                 return r
-    return 1  # 默认第1行
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 加载经销商名单（表头自动定位，防插行插列）
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _clean_uid(v) -> str:
+    """单元格 UID 清洗：兼容数字格、'100234684.0'、全角空格等。"""
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    u = re.sub(r"[\s\u3000]+", "", str(v))
+    if u.endswith(".0"):
+        u = u[:-2]
+    return u
+
+
 def load_dealers_yiche(xlsx_path: str) -> list[dict]:
-    wb = openpyxl.load_workbook(xlsx_path)
-    ws = wb.active
+    """名单加载：表头关键词自动定位，客户插行/插列/改列序均不影响。"""
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
 
-    # 找表头行
-    header_row = _find_header_row(ws)
-
-    # 找各列
-    uid_col  = _find_column(ws, header_row, "易车UID", "易车uid", "易车ID", "易车id")
-    name_col = _find_column(ws, header_row, "简称")
-    prov_col = _find_column(ws, header_row, "省份", "省")
-    city_col = _find_column(ws, header_row, "城市", "市")
-
-    if uid_col is None:
+    # 多 sheet 时逐个找含「易车UID」表头的 sheet
+    ws = header_row = None
+    for sheet in wb.worksheets:
+        hr = _find_header_row(sheet)
+        if hr is not None:
+            ws, header_row = sheet, hr
+            break
+    if ws is None:
         raise ValueError(
-            f"在 {xlsx_path} 的前10行找不到「易车UID」列。"
-            "请确认表头含『易车UID』字样。"
+            f"在 {xlsx_path} 所有 sheet 的前20行都找不到「易车UID」列。\n"
+            "请确认名单表头含『易车UID』字样（大小写/空格不限）。"
         )
 
-    dealers = []
+    uid_col  = _find_column(ws, header_row,
+                            ("易车UID", "易车uid", "易车Uid", "易车ID", "易车id", "易车编号"))
+    name_col = (_find_column(ws, header_row, ("简称",), exclude=("易车", "汽车之家"))
+                or _find_column(ws, header_row, ("易车经销商名称", "易车店名"))
+                or _find_column(ws, header_row, ("经销商名称", "店名"), exclude=("汽车之家",)))
+    prov_col = _find_column(ws, header_row, ("省份", "省"))
+    city_col = _find_column(ws, header_row, ("城市", "市"), exclude=("省",))
+
+    print(f"[名单] sheet「{ws.title}」第{header_row}行为表头："
+          f"UID列{uid_col} 简称列{name_col} 省列{prov_col} 市列{city_col}")
+
+    dealers, skipped, seen = [], [], set()
     for r in range(header_row + 1, ws.max_row + 1):
-        uid = ws.cell(r, uid_col).value
-        if uid is None or str(uid).strip() in ("", "无", "#N/A"):
-            continue
-        uid = str(uid).strip()
-        # 易车 UID 格式：9位数字，100XXXXXX
+        raw = ws.cell(r, uid_col).value
+        uid = _clean_uid(raw)
+        if uid in ("", "无", "#N/A", "None", "/", "-"):
+            continue                      # 空行/占位，静默跳过
         if not re.match(r"^1\d{8}$", uid):
+            skipped.append(f"第{r}行「{raw}」")   # 填了但格式不对，要提示
             continue
-        name = str(ws.cell(r, name_col).value or "") if name_col else ""
-        prov = str(ws.cell(r, prov_col).value or "") if prov_col else ""
-        city = str(ws.cell(r, city_col).value or "") if city_col else ""
+        if uid in seen:
+            skipped.append(f"第{r}行 UID重复 {uid}")
+            continue
+        seen.add(uid)
+        name = str(ws.cell(r, name_col).value or "").strip() if name_col else ""
+        prov = str(ws.cell(r, prov_col).value or "").strip() if prov_col else ""
+        city = str(ws.cell(r, city_col).value or "").strip() if city_col else ""
         dealers.append({
             "province":  prov or "未知",
             "city":      city or "未知",
             "dealer_id": uid,
-            "name":      name,
+            "name":      name or uid,
         })
+    if skipped:
+        print(f"[名单] ⚠ 跳过 {len(skipped)} 行（易车UID缺失/格式异常/重复）：")
+        for it in skipped[:10]:
+            print(f"        {it}")
+        if len(skipped) > 10:
+            print(f"        …等共 {len(skipped)} 行")
     return dealers
 
 

@@ -46,6 +46,14 @@ TASK_CONFIG = {
 }
 # =============================================================================
 
+# ── vendor 离线依赖引导：pip 装不上时自动用随包附带的 vendor/ ──
+import sys as _sys
+from pathlib import Path as _Path
+_vendor = _Path(__file__).resolve().parent / "vendor"
+if _vendor.is_dir() and str(_vendor) not in _sys.path:
+    _sys.path.append(str(_vendor))   # append：优先用已正常安装的版本
+del _sys, _Path, _vendor
+
 import re
 import sys
 import time
@@ -95,22 +103,97 @@ def _infer_prov_city(short_name: str):
 
 
 # ── Step 1: 从 Excel 名单加载经销商 ─────────────────────────────────────
-def load_dealers(xlsx_path: str) -> list[dict]:
-    wb = openpyxl.load_workbook(xlsx_path)
-    ws = wb["Sheet1"]
-    dealers = []
-    for r in range(4, ws.max_row + 1):
-        uid   = ws.cell(r, 3).value
-        short = ws.cell(r, 2).value or ""
-        if uid is None or str(uid) == "#N/A" or not str(uid).isdigit():
+def _norm_header(v) -> str:
+    return re.sub(r"[\s\u3000]+", "", str(v or ""))
+
+
+def _clean_uid(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    u = re.sub(r"[\s\u3000]+", "", str(v))
+    return u[:-2] if u.endswith(".0") else u
+
+
+_AH_UID_KW = ("汽车之家UID", "汽车之家uid", "汽车之家ID", "汽车之家id",
+              "之家UID", "之家uid", "autohome")
+
+
+def _find_ah_header(wb):
+    """逐 sheet 扫前20行，找含「汽车之家UID」的表头单元格（排除含「易车」的列）。"""
+    for ws in wb.worksheets:
+        for r in range(1, min(20, ws.max_row) + 1):
+            for c in range(1, ws.max_column + 1):
+                v = _norm_header(ws.cell(r, c).value)
+                if "易车" in v:
+                    continue
+                if any(kw in v for kw in _AH_UID_KW):
+                    return ws, r, c
+    return None, None, None
+
+
+def _find_col(ws, row, keywords, exclude=()):
+    for c in range(1, ws.max_column + 1):
+        v = _norm_header(ws.cell(row, c).value)
+        if not v or any(ex in v for ex in exclude):
             continue
-        prov, city = _infer_prov_city(short)
+        if any(kw in v for kw in keywords):
+            return c
+    return None
+
+
+def load_dealers(xlsx_path: str) -> list[dict]:
+    """汽车之家名单加载：按表头关键词定位列，插行/插列/换列序不影响。
+    找不到「汽车之家UID」表头时，回退旧版固定排版（B列简称/C列UID/第4行起）。"""
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws, header_row, uid_col = _find_ah_header(wb)
+
+    if ws is None:                                # ── 旧版兜底 ──
+        ws = wb["Sheet1"] if "Sheet1" in wb.sheetnames else wb.active
+        print("[名单] 未找到「汽车之家UID」表头，按旧版固定排版读取"
+              "（B列=简称 C列=UID，第4行起）")
+        header_row, uid_col, name_col, prov_col, city_col = 3, 3, 2, None, None
+    else:
+        name_col = (_find_col(ws, header_row, ("简称",), exclude=("易车",))
+                    or _find_col(ws, header_row, ("店头名称", "店名", "经销商名称"),
+                                 exclude=("易车",)))
+        prov_col = _find_col(ws, header_row, ("省份", "省"))
+        city_col = _find_col(ws, header_row, ("城市", "市"), exclude=("省",))
+        print(f"[名单] sheet「{ws.title}」第{header_row}行为表头："
+              f"UID列{uid_col} 简称列{name_col} 省列{prov_col} 市列{city_col}")
+
+    dealers, skipped, seen = [], [], set()
+    for r in range(header_row + 1, ws.max_row + 1):
+        raw = ws.cell(r, uid_col).value
+        uid = _clean_uid(raw)
+        if uid in ("", "无", "#N/A", "None", "/", "-"):
+            continue
+        if not uid.isdigit():
+            skipped.append(f"第{r}行「{raw}」")
+            continue
+        if uid in seen:
+            skipped.append(f"第{r}行 UID重复 {uid}")
+            continue
+        seen.add(uid)
+        short = str(ws.cell(r, name_col).value or "").strip() if name_col else ""
+        prov = str(ws.cell(r, prov_col).value or "").strip() if prov_col else ""
+        city = str(ws.cell(r, city_col).value or "").strip() if city_col else ""
+        if not (prov and city):
+            ip, ic = _infer_prov_city(short)
+            prov, city = prov or ip, city or ic
         dealers.append({
             "province":  prov,
             "city":      city,
-            "dealer_id": str(uid),
-            "name":      short,
+            "dealer_id": uid,
+            "name":      short or uid,
         })
+    if skipped:
+        print(f"[名单] ⚠ 跳过 {len(skipped)} 行（汽车之家UID缺失/格式异常/重复）：")
+        for it in skipped[:10]:
+            print(f"        {it}")
+        if len(skipped) > 10:
+            print(f"        …等共 {len(skipped)} 行")
     return dealers
 
 
