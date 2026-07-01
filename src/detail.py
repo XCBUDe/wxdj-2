@@ -85,22 +85,70 @@ def _extract_name(page: Page, fallback: str) -> str:
 # 首页：最新软文日期
 # ─────────────────────────────────────────────────────────────────────────
 def _extract_article_date(page: Page) -> str:
-    date_re = re.compile(r"\d{4}-\d{2}-\d{2}")
+    """
+    采集公告板（促销列表）最新软文日期。
+
+    汽车之家经销商页面结构（Tailwind 动态类名）：
+      大标题行：span.tw-text-[14px].tw-text-[#828CA0]
+                父 div 含 tw-mb-3（区别标志）
+      列表每行：span.tw-text-[14px].tw-text-[#828CA0]
+                父 div 不含 tw-mb-3
+
+    策略：取所有日期 span，排除父 div 含 tw-mb-3 的大标题，
+          只保留促销列表行，取最新日期。
+    """
+    from datetime import date as _date
+    today = _date.today()
+    date_re = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
     dates = []
-    for sel in SEL_DATE.split(","):
-        try:
-            for el in page.locator(sel.strip()).all():
-                m = date_re.search(el.inner_text(timeout=800))
-                if m:
-                    dates.append(m.group())
-        except Exception:
-            pass
-    if not dates:
-        try:
-            dates = date_re.findall(page.inner_text("body", timeout=3000))
-        except Exception:
-            pass
-    return max(dates) if dates else ""
+
+    try:
+        # Playwright 获取所有日期 span（Tailwind 动态类，JS渲染后才存在）
+        # 选择器：含 tw-text-[14px] 和 tw-text-[#828CA0] 的 span
+        spans = page.locator(
+            "span.tw-text-\\[14px\\].tw-text-\\[\\#828CA0\\]"
+        ).all()
+        for span in spans:
+            try:
+                text = span.inner_text(timeout=500).strip()
+                m = date_re.match(text)
+                if not m:
+                    continue
+                # 检查父元素是否含 tw-mb-3（大标题行，排除）
+                parent_classes = span.evaluate(
+                    "el => el.parentElement ? el.parentElement.className : ''"
+                )
+                if "tw-mb-3" in parent_classes:
+                    continue
+                dt = _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                if dt <= today:
+                    dates.append(dt)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if dates:
+        return str(max(dates))
+
+    # fallback：全文正则，行为与旧版一致（兜底）
+    try:
+        all_dates = re.findall(r"\d{4}-\d{2}-\d{2}", page.inner_text("body", timeout=3000))
+        valid = []
+        for d in all_dates:
+            try:
+                y, mo, dy = d.split("-")
+                dt = _date(int(y), int(mo), int(dy))
+                if dt <= today:
+                    valid.append(dt)
+            except Exception:
+                pass
+        if valid:
+            return str(max(valid))
+    except Exception:
+        pass
+
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────

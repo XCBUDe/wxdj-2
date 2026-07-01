@@ -514,6 +514,46 @@ def main():
     _apply_external_config(cfg)
     _autodetect_inputs(cfg)
 
+    # ── 有语义的文件名：{网络}网{平台}{MMDDHHMM} 如 "H网易车711208" ──────
+    from datetime import datetime as _dt
+    import re as _re
+    _base = cfg.get("output_dir", "output_yiche")
+    Path(_base).mkdir(parents=True, exist_ok=True)
+
+    # 1. 网络前缀：从名单文件名中提取（H网/C网/…），取第一个大写字母
+    _list_name = Path(cfg.get("dealer_list_xlsx","")).stem  # e.g. "H网检核表_含易车UID"
+    _net_m = _re.search(r"([A-Za-z一-鿿])[网網]", _list_name)
+    _net = _net_m.group(1).upper() if _net_m else "X"          # H / C / …
+
+    # 2. 平台名（固定）
+    _platform_name = "易车"
+
+    # 3. 时间戳：月(不补零)+日(不补零)+时分(补零) 如 7月1日12:08 → "711208"
+    _now = _dt.now()
+    _mmddhhmm = f"{_now.month}{_now.day}{_now.strftime('%H%M')}"
+
+    _run_name = f"{_net}网{_platform_name}{_mmddhhmm}"
+    _run_dir  = str(Path(_base) / _run_name)
+
+    # 同名冲突加序号（同一天跑多次）
+    _idx = 1
+    _candidate = _run_dir
+    while Path(_candidate).exists():
+        _candidate = f"{_run_dir}_{_idx}"
+        _idx += 1
+    _run_dir = _candidate
+    Path(_run_dir).mkdir(parents=True, exist_ok=True)
+    print(f"[输出目录] {str(Path(_run_dir).resolve())}")
+
+    # 4. 把输出路径指向子目录（checkpoint 留根目录）
+    def _in_base(p): return p and (Path(p).parent == Path(_base) or str(p) == _base)
+    if _in_base(cfg.get("result_xlsx")):
+        cfg["result_xlsx"]     = str(Path(_run_dir) / "result.xlsx")
+    if _in_base(cfg.get("checked_xlsx")):
+        cfg["checked_xlsx"]    = str(Path(_run_dir) / "result_checked.xlsx")
+    if _in_base(cfg.get("screenshots_zip")):
+        cfg["screenshots_zip"] = str(Path(_run_dir) / "头图截图.zip")
+
     if not (cfg.get("dealer_list_xlsx") and
             Path(cfg["dealer_list_xlsx"]).exists()):
         print("\n[错误] 没找到经销商名单 xlsx。")

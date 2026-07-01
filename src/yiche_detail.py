@@ -199,12 +199,74 @@ def _parse_cars_text_fallback(html: str, series_map: dict) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _fetch_article_date(uid: str) -> str:
+    """
+    采集最新软文日期（基于真实HTML结构，非猜测）。
+
+    主页 dealer.yiche.com/{uid}/ :
+      软文列表固定结构：div.hotnews > ul.news_list > li > i
+      日期格式为 MM-DD（如 "06-12"），补当前年份取最新。
+
+    mobile软文页 dealer.m.yiche.com/d{uid}/news.html :
+      日期在 span.time，格式 YYYY-MM-DD。
+      注意：span.time 有时是"剩余N天"（活动倒计时），需过滤。
+
+    策略：主页优先（最稳定），mobile备用。
+    """
+    from datetime import date
+    today = date.today()
+
+    def _from_homepage(html: str) -> str:
+        if not html or len(html) < 500:
+            return ""
+        soup = BeautifulSoup(html, "html.parser")
+        dates = []
+        for i_tag in soup.select("div.hotnews ul.news_list li i"):
+            text = i_tag.get_text(strip=True)
+            m = re.match(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$", text)
+            if m:
+                try:
+                    dt = date(today.year, int(m.group(1)), int(m.group(2)))
+                    if dt <= today:
+                        dates.append(dt)
+                except Exception:
+                    pass
+        return str(max(dates)) if dates else ""
+
+    def _from_mobile(html: str) -> str:
+        if not html or len(html) < 500:
+            return ""
+        soup = BeautifulSoup(html, "html.parser")
+        dates = []
+        for span in soup.select("span.time"):
+            text = span.get_text(strip=True)
+            # 只取 YYYY-MM-DD 格式，过滤"剩余N天"等活动倒计时
+            m = re.match(r"^(20\d{2})-(\d{2})-(\d{2})$", text)
+            if m:
+                try:
+                    dt = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                    if dt <= today:
+                        dates.append(dt)
+                except Exception:
+                    pass
+        return str(max(dates)) if dates else ""
+
     try:
-        html = _get(f"https://dealer.m.yiche.com/d{uid}/news.html")
-        dates = re.findall(r"20\d{2}-\d{2}-\d{2}", html)
-        return dates[0] if dates else ""
+        hp = _get(f"https://dealer.yiche.com/{uid}/")
+        d = _from_homepage(hp)
+        if d:
+            return d
     except Exception:
-        return ""
+        pass
+
+    try:
+        mb = _get(f"https://dealer.m.yiche.com/d{uid}/news.html")
+        d = _from_mobile(mb)
+        if d:
+            return d
+    except Exception:
+        pass
+
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,38 +274,38 @@ def _fetch_article_date(uid: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _download_banner(uid: str, save_dir: str) -> str:
-    """下载经销商头图，返回本地路径；失败返回空串。"""
+    """
+    下载经销商头图（真实结构，非猜测）。
+
+    经真实HTML验证（惠州鹏珵/惠州永胜达/广州华菱三家一致）：
+      banner图：<img src=".../dealer/cytfocusimage/{uid}/{日期}/...">
+                URL 直接带经销商UID，最可靠标识
+                同页多张按日期倒序排列，第一张即最新头图
+      员工照片：<img alt="姓名"> 父级 <span class="s_men">
+                旧版兜底逻辑曾误抓这类照片，现已排除
+
+    注意：不做"文件已存在就跳过"的缓存，每次全新下载，
+    避免旧版错误抓取的照片被永久缓存、后续跑不再刷新。
+    """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     save_path = str(Path(save_dir) / f"{uid}.png")
-    if Path(save_path).exists():
-        return save_path
     try:
         html = _get(f"https://dealer.yiche.com/{uid}/")
         soup = BeautifulSoup(html, "html.parser")
 
-        # 找 banner 区域的图片
         img_url = None
-        for selector in [
-            "div.dealer-banner img", "div.banner img",
-            "div.shop-header img", ".index-banner img",
-            "div.head-img img", ".dealer-head img",
-        ]:
-            el = soup.select_one(selector)
-            if el and el.get("src"):
-                img_url = el["src"]
+        for img in soup.find_all("img"):
+            src_val = img.get("src", "") or img.get("data-src", "")
+            if not src_val:
+                continue
+            # 排除员工照片（父级 class="s_men"）
+            parent = img.parent
+            if parent and parent.get("class") == ["s_men"]:
+                continue
+            # 精确匹配：URL 含 cytfocusimage 且带本经销商UID
+            if "cytfocusimage" in src_val and uid in src_val:
+                img_url = src_val
                 break
-
-        # 回退：找页面顶部区域最大的图
-        if not img_url:
-            for img in soup.find_all("img")[:20]:
-                src = img.get("src", "")
-                # 过滤掉 logo、图标等小图
-                w = int(img.get("width", 0) or 0)
-                h = int(img.get("height", 0) or 0)
-                if src and (w > 200 or h > 80 or
-                            any(k in src for k in ["banner", "head", "cover", "adsimg"])):
-                    img_url = src
-                    break
 
         if not img_url:
             return ""
@@ -254,7 +316,7 @@ def _download_banner(uid: str, save_dir: str) -> str:
             img_url = "https://dealer.yiche.com" + img_url
 
         r = requests.get(img_url, headers=HEADERS, timeout=15)
-        if r.status_code == 200:
+        if r.status_code == 200 and len(r.content) > 1000:   # 过滤空白/失败占位图
             with open(save_path, "wb") as f:
                 f.write(r.content)
             return save_path

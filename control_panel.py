@@ -179,6 +179,7 @@ class ControlPanel:
         self.proc = None
         self.dep_labels = {}
         self._pending_start = False     # 自动装完依赖后续跑
+        self._last_run_dir = None       # 最近一次任务的输出子目录
 
         self._build_ui()
         self.refresh_deps()
@@ -310,6 +311,9 @@ class ControlPanel:
         self.btn_stop.pack(side="left", padx=8)
         self.btn_stop.configure(state="disabled")
         Btn(run, "打开输出文件夹", self.open_output).pack(side="left", padx=8)
+        self.btn_open_last = Btn(run, "📂 打开结果文件夹", self.open_last_run)
+        self.btn_open_last.configure(state="disabled", bg="#E8F5F2")
+        self.btn_open_last.pack(side="left", padx=8)
 
         # ===== 日志（控制台风格） =====
         logwrap = tk.Frame(body, bg=C["bg"]); logwrap.pack(
@@ -362,7 +366,17 @@ class ControlPanel:
 
     def logln(self, text=""):
         self.log.configure(state="normal")
-        self.log.insert("end", text + "\n")
+        if text.startswith("[输出目录]"):
+            # 醒目高亮，同时记录供"打开"按钮使用
+            self.log.tag_configure("outdir", foreground="#5DDDBE", font=("Consolas", 9, "bold"))
+            self.log.insert("end", text + "\n", "outdir")
+            path = text.replace("[输出目录]", "").strip()
+            self._last_run_dir = path
+            # 更新「打开结果」按钮文字
+            self.root.after(0, lambda p=path: self.btn_open_last.configure(
+                text=f"📂 打开结果文件夹", state="normal"))
+        else:
+            self.log.insert("end", text + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -417,6 +431,17 @@ class ControlPanel:
             os.startfile(out)            # noqa
         else:
             subprocess.Popen(["xdg-open", str(out)])
+
+    def open_last_run(self):
+        """打开本次任务的输出子目录（直接到结果文件夹，不用自己找子文件夹）。"""
+        p = self._last_run_dir
+        if not p or not Path(p).exists():
+            messagebox.showinfo("提示", "暂无结果目录，请先运行任务。")
+            return
+        if sys.platform == "win32":
+            os.startfile(p)              # noqa
+        else:
+            subprocess.Popen(["xdg-open", p])
 
     # ──────────────────────────────────────────────────────────────────
     # 子进程
