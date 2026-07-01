@@ -256,7 +256,7 @@ def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
             page = ctx.new_page()
             page.goto(url, timeout=25000, wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
-            page.screenshot(path=save_path, full_page=True)
+            page.screenshot(path=save_path)
             browser.close()
         return save_path
     except Exception as e:
