@@ -82,15 +82,14 @@ def _parse_cars_html(html: str) -> list[dict]:
                 current_series = m.group(1).strip()
                 break
 
-        # 如果上面没找到，从 table 的父容器找 cars_{id} 链接
-        if not current_series:
-            for parent in table.parents:
-                sid, sname = _update_series_from(parent)
-                if sname:
-                    current_series, current_sid = sname, sid
-                    break
-                if parent.name in ("body", "html"):
-                    break
+        # 每张表都从父容器重新取车系（Yiche 结构：table→car_price→car_list_item→car_top→cars_link）
+        for parent in table.parents:
+            sid, sname = _update_series_from(parent)
+            if sname:
+                current_series, current_sid = sname, sid
+                break
+            if parent.name in ("body", "html"):
+                break
 
         # 解析每个报价行
         for tr in table.find_all("tr"):
@@ -106,9 +105,10 @@ def _parse_cars_html(html: str) -> list[dict]:
             if cells and cells[0] in ("车款", "车型", "厂商指导价"):
                 continue
 
-            # 车款名：第一个单元格，去掉噪音词
-            trim_name = re.sub(r"\s*(有现车|外观颜色|↓|直降|降价)\s*", " ",
-                               cells[0] if cells else "").strip()
+            # 车款名：第一个单元格，去掉促销噪音（综合优惠/搭配消费/有现车/...）
+            trim_raw = cells[0] if cells else ""
+            trim_name = re.sub(r"\s*(综合优惠|搭配消费).*$", "", trim_raw, flags=re.DOTALL)
+            trim_name = re.sub(r"\s*(有现车|外观颜色|↓|直降|降价)\s*", " ", trim_name).strip()
             if not trim_name or len(trim_name) < 3:
                 continue
 
