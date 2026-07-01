@@ -549,7 +549,7 @@ def main():
     Path(_run_dir).mkdir(parents=True, exist_ok=True)
     print(f"[输出目录] {str(Path(_run_dir).resolve())}")
 
-    # 4. 把输出路径指向子目录，xlsx/zip 文件名与文件夹名统一
+    # 4. 把输出路径指向子目录，xlsx/zip/checkpoint 文件名与文件夹名统一
     def _in_base(p): return p and (Path(p).parent == Path(_base) or str(p) == _base)
     if _in_base(cfg.get("result_xlsx")):
         cfg["result_xlsx"]     = str(Path(_run_dir) / f"{_run_name}.xlsx")
@@ -557,6 +557,9 @@ def main():
         cfg["checked_xlsx"]    = str(Path(_run_dir) / f"{_run_name}_核价.xlsx")
     if _in_base(cfg.get("screenshots_zip")):
         cfg["screenshots_zip"] = str(Path(_run_dir) / f"{_run_name}_头图.zip")
+    # checkpoint 也跟子目录走，避免不同运行组的经销商互相命中"已完成"
+    if _in_base(cfg.get("checkpoint")):
+        cfg["checkpoint"]      = str(Path(_run_dir) / "checkpoint.jsonl")
 
     if not (cfg.get("dealer_list_xlsx") and
             Path(cfg["dealer_list_xlsx"]).exists()):

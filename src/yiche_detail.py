@@ -224,15 +224,13 @@ def _fetch_article_date(uid: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _YICHE_VIEWPORT = {"width": 1440, "height": 900}
-_YICHE_CLIP_H   = 900   # 截取整个视口（banner + 导航 + 文章列表 + 联系方式）
 
 def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
-    """用 Playwright 截取易车经销商首页，按简称命名保存，失败返回空串。"""
+    """用 Playwright 截取易车经销商首页（整页），按简称命名保存，失败返回空串。"""
     from playwright.sync_api import sync_playwright
     import re as _re
 
     Path(save_dir).mkdir(parents=True, exist_ok=True)
-    # 文件名去掉非法字符
     safe_name = _re.sub(r'[\\/:*?"<>|]', "_", name) or uid
     save_path = str(Path(save_dir) / f"{safe_name}.png")
     if Path(save_path).exists():
@@ -244,14 +242,8 @@ def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
             browser = pw.chromium.launch(headless=True)
             page = browser.new_page(viewport=_YICHE_VIEWPORT)
             page.goto(url, timeout=25000, wait_until="domcontentloaded")
-            # 稍等 JS 渲染 banner
             page.wait_for_timeout(1500)
-            page.screenshot(
-                path=save_path,
-                clip={"x": 0, "y": 0,
-                      "width": _YICHE_VIEWPORT["width"],
-                      "height": _YICHE_CLIP_H},
-            )
+            page.screenshot(path=save_path, full_page=True)
             browser.close()
         return save_path
     except Exception as e:
