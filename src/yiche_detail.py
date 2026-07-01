@@ -224,6 +224,12 @@ def _fetch_article_date(uid: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _YICHE_VIEWPORT = {"width": 1440, "height": 900}
+# 与 HTTP 请求保持一致的桌面 UA，避免 headless 被识别为移动端
+_DESKTOP_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
     """用 Playwright 截取易车经销商首页（整页），按简称命名保存，失败返回空串。"""
@@ -239,8 +245,15 @@ def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
     url = f"https://dealer.yiche.com/{uid}/"
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            page = browser.new_page(viewport=_YICHE_VIEWPORT)
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                viewport=_YICHE_VIEWPORT,
+                user_agent=_DESKTOP_UA,
+            )
+            page = ctx.new_page()
             page.goto(url, timeout=25000, wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
             page.screenshot(path=save_path, full_page=True)
