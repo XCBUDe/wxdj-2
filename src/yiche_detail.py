@@ -37,7 +37,7 @@ def _get(url: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 解析 cars.html → [{series, trim, msrp_str, bare_str}]
+# 解析 cars.html → [{series, trim, price_msrp, price_bare}]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_cars_html(html: str) -> list[dict]:
@@ -121,10 +121,10 @@ def _parse_cars_html(html: str) -> list[dict]:
 
             if current_series:
                 pricing.append({
-                    "series":    current_series,
-                    "trim":      trim_name,
-                    "msrp_str":  f"{msrp}万",
-                    "bare_str":  f"{bare}万",
+                    "series":     current_series,
+                    "trim":       trim_name,
+                    "price_msrp": f"{msrp}万",
+                    "price_bare": f"{bare}万",
                 })
 
     # ── Step 3: 如果 BS4 表格解析为空，回退到文本状态机 ────────────────────
@@ -185,10 +185,10 @@ def _parse_cars_text_fallback(html: str, series_map: dict) -> list[dict]:
             bare = rm.group(4)
             if float(bare) >= 1:
                 pricing.append({
-                    "series":   sname,
-                    "trim":     trim,
-                    "msrp_str": f"{msrp}万",
-                    "bare_str": f"{bare}万",
+                    "series":     sname,
+                    "trim":       trim,
+                    "price_msrp": f"{msrp}万",
+                    "price_bare": f"{bare}万",
                 })
 
     return pricing
@@ -200,129 +200,63 @@ def _parse_cars_text_fallback(html: str, series_map: dict) -> list[dict]:
 
 def _fetch_article_date(uid: str) -> str:
     """
-    采集最新软文日期（基于真实HTML结构，非猜测）。
-
-    主页 dealer.yiche.com/{uid}/ :
-      软文列表固定结构：div.hotnews > ul.news_list > li > i
-      日期格式为 MM-DD（如 "06-12"），补当前年份取最新。
-
-    mobile软文页 dealer.m.yiche.com/d{uid}/news.html :
-      日期在 span.time，格式 YYYY-MM-DD。
-      注意：span.time 有时是"剩余N天"（活动倒计时），需过滤。
-
-    策略：主页优先（最稳定），mobile备用。
+    采集最新软文日期。
+    直接调 GetMoreNews JSON API，取第一条的 NewsPubTime（YYYY-MM-DD）。
     """
-    from datetime import date
-    today = date.today()
-
-    def _from_homepage(html: str) -> str:
-        if not html or len(html) < 500:
-            return ""
-        soup = BeautifulSoup(html, "html.parser")
-        dates = []
-        for i_tag in soup.select("div.hotnews ul.news_list li i"):
-            text = i_tag.get_text(strip=True)
-            m = re.match(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$", text)
-            if m:
-                try:
-                    dt = date(today.year, int(m.group(1)), int(m.group(2)))
-                    if dt <= today:
-                        dates.append(dt)
-                except Exception:
-                    pass
-        return str(max(dates)) if dates else ""
-
-    def _from_mobile(html: str) -> str:
-        if not html or len(html) < 500:
-            return ""
-        soup = BeautifulSoup(html, "html.parser")
-        dates = []
-        for span in soup.select("span.time"):
-            text = span.get_text(strip=True)
-            # 只取 YYYY-MM-DD 格式，过滤"剩余N天"等活动倒计时
-            m = re.match(r"^(20\d{2})-(\d{2})-(\d{2})$", text)
-            if m:
-                try:
-                    dt = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-                    if dt <= today:
-                        dates.append(dt)
-                except Exception:
-                    pass
-        return str(max(dates)) if dates else ""
-
+    import json as _json
+    url = f"https://dealer.m.yiche.com/d{uid}/Ajax/GetMoreNews?pageIndex=1"
     try:
-        hp = _get(f"https://dealer.yiche.com/{uid}/")
-        d = _from_homepage(hp)
-        if d:
-            return d
+        r = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 200:
+            data = _json.loads(r.content.decode("utf-8", errors="replace"))
+            if isinstance(data, list) and data:
+                # 取最新一条（列表已按时间降序）的 NewsPubTime
+                pub = str(data[0].get("NewsPubTime", "")).strip()
+                if re.match(r"20\d{2}-\d{2}-\d{2}", pub):
+                    return pub[:10]
     except Exception:
         pass
-
-    try:
-        mb = _get(f"https://dealer.m.yiche.com/d{uid}/news.html")
-        d = _from_mobile(mb)
-        if d:
-            return d
-    except Exception:
-        pass
-
     return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 头图 Banner 下载
+# 首页截图（Playwright，与汽车之家保持一致）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _download_banner(uid: str, save_dir: str) -> str:
-    """
-    下载经销商头图（真实结构，非猜测）。
+_YICHE_VIEWPORT = {"width": 1440, "height": 900}
+_YICHE_CLIP_H   = 900   # 截取整个视口（banner + 导航 + 文章列表 + 联系方式）
 
-    经真实HTML验证（惠州鹏珵/惠州永胜达/广州华菱三家一致）：
-      banner图：<img src=".../dealer/cytfocusimage/{uid}/{日期}/...">
-                URL 直接带经销商UID，最可靠标识
-                同页多张按日期倒序排列，第一张即最新头图
-      员工照片：<img alt="姓名"> 父级 <span class="s_men">
-                旧版兜底逻辑曾误抓这类照片，现已排除
+def _take_screenshot_yiche(uid: str, name: str, save_dir: str) -> str:
+    """用 Playwright 截取易车经销商首页，按简称命名保存，失败返回空串。"""
+    from playwright.sync_api import sync_playwright
+    import re as _re
 
-    注意：不做"文件已存在就跳过"的缓存，每次全新下载，
-    避免旧版错误抓取的照片被永久缓存、后续跑不再刷新。
-    """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
-    save_path = str(Path(save_dir) / f"{uid}.png")
+    # 文件名去掉非法字符
+    safe_name = _re.sub(r'[\\/:*?"<>|]', "_", name) or uid
+    save_path = str(Path(save_dir) / f"{safe_name}.png")
+    if Path(save_path).exists():
+        return save_path
+
+    url = f"https://dealer.yiche.com/{uid}/"
     try:
-        html = _get(f"https://dealer.yiche.com/{uid}/")
-        soup = BeautifulSoup(html, "html.parser")
-
-        img_url = None
-        for img in soup.find_all("img"):
-            src_val = img.get("src", "") or img.get("data-src", "")
-            if not src_val:
-                continue
-            # 排除员工照片（父级 class="s_men"）
-            parent = img.parent
-            if parent and parent.get("class") == ["s_men"]:
-                continue
-            # 精确匹配：URL 含 cytfocusimage 且带本经销商UID
-            if "cytfocusimage" in src_val and uid in src_val:
-                img_url = src_val
-                break
-
-        if not img_url:
-            return ""
-
-        if img_url.startswith("//"):
-            img_url = "https:" + img_url
-        elif img_url.startswith("/"):
-            img_url = "https://dealer.yiche.com" + img_url
-
-        r = requests.get(img_url, headers=HEADERS, timeout=15)
-        if r.status_code == 200 and len(r.content) > 1000:   # 过滤空白/失败占位图
-            with open(save_path, "wb") as f:
-                f.write(r.content)
-            return save_path
-    except Exception:
-        pass
-    return ""
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(viewport=_YICHE_VIEWPORT)
+            page.goto(url, timeout=25000, wait_until="domcontentloaded")
+            # 稍等 JS 渲染 banner
+            page.wait_for_timeout(1500)
+            page.screenshot(
+                path=save_path,
+                clip={"x": 0, "y": 0,
+                      "width": _YICHE_VIEWPORT["width"],
+                      "height": _YICHE_CLIP_H},
+            )
+            browser.close()
+        return save_path
+    except Exception as e:
+        print(f"    [WARN] 易车截图失败 {uid}: {e}")
+        return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,9 +299,11 @@ def fetch_dealer_yiche(dealer: dict, features: dict,
             result["article_date"] = _fetch_article_date(uid)
             time.sleep(REQUEST_DELAY)
 
-        # 3. 头图截图
+        # 3. 首页截图（Playwright，按简称命名）
         if features.get("screenshot", True):
-            result["screenshot_path"] = _download_banner(uid, screenshot_dir)
+            result["screenshot_path"] = _take_screenshot_yiche(
+                uid, result.get("name") or uid, screenshot_dir
+            )
             time.sleep(REQUEST_DELAY)
 
     except Exception as e:

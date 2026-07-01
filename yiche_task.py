@@ -265,7 +265,8 @@ def run_scrape(dealers, cfg) -> list:
     checkpoint  = cfg["checkpoint"]
     concurrency = cfg["concurrency"]
     result_path = cfg["result_xlsx"]
-    scr_dir     = str(Path(cfg["output_dir"]) / "screenshots_yiche")
+    # 截图目录跟着本次输出子目录走（result_xlsx 已指向时间戳子目录）
+    scr_dir     = str(Path(result_path).parent / "头图截图")
 
     Path(result_path).parent.mkdir(parents=True, exist_ok=True)
     done_ids = _load_checkpoint(checkpoint)
@@ -463,17 +464,20 @@ def run_compare(result_xlsx, standard_xlsx, checked_xlsx):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_zip_screenshots(dealers, cfg):
-    scr_dir  = str(Path(cfg["output_dir"]) / "screenshots_yiche")
+    scr_dir  = str(Path(cfg["result_xlsx"]).parent / "头图截图")
     zip_path = cfg["screenshots_zip"]
+    # 截图已按简称命名，直接按简称查找
     name_map = {d["dealer_id"]: d["name"] for d in dealers}
 
     Path(zip_path).parent.mkdir(parents=True, exist_ok=True)
+    import re as _re
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         missing = []
         for did, sname in name_map.items():
-            src = Path(scr_dir) / f"{did}.png"
+            safe = _re.sub(r'[\\/:*?"<>|]', "_", sname) or did
+            src = Path(scr_dir) / f"{safe}.png"
             if src.exists():
-                zf.write(src, f"{sname}.png")
+                zf.write(src, f"{safe}.png")
             else:
                 missing.append(f"{sname}({did})")
         if missing:
@@ -545,14 +549,14 @@ def main():
     Path(_run_dir).mkdir(parents=True, exist_ok=True)
     print(f"[输出目录] {str(Path(_run_dir).resolve())}")
 
-    # 4. 把输出路径指向子目录（checkpoint 留根目录）
+    # 4. 把输出路径指向子目录，xlsx/zip 文件名与文件夹名统一
     def _in_base(p): return p and (Path(p).parent == Path(_base) or str(p) == _base)
     if _in_base(cfg.get("result_xlsx")):
-        cfg["result_xlsx"]     = str(Path(_run_dir) / "result.xlsx")
+        cfg["result_xlsx"]     = str(Path(_run_dir) / f"{_run_name}.xlsx")
     if _in_base(cfg.get("checked_xlsx")):
-        cfg["checked_xlsx"]    = str(Path(_run_dir) / "result_checked.xlsx")
+        cfg["checked_xlsx"]    = str(Path(_run_dir) / f"{_run_name}_核价.xlsx")
     if _in_base(cfg.get("screenshots_zip")):
-        cfg["screenshots_zip"] = str(Path(_run_dir) / "头图截图.zip")
+        cfg["screenshots_zip"] = str(Path(_run_dir) / f"{_run_name}_头图.zip")
 
     if not (cfg.get("dealer_list_xlsx") and
             Path(cfg["dealer_list_xlsx"]).exists()):
