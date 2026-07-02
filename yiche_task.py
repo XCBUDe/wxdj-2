@@ -365,50 +365,23 @@ def _load_standard(xlsx_path: str) -> dict:
     return by_series
 
 
-# 互斥属性对：易车车款含A、标准媒体车型含B（或反过来）→ 属性矛盾，不能匹配
-_CONTRARY_PAIRS = [
-    ("四驱", "两驱"),
-    ("7座",  "5座"),
-]
-
-
-def _trim_compatible(yiche_norm: str, std_media_norm: str) -> bool:
-    """若关键属性互相矛盾（四驱vs两驱 / 5座vs7座），返回 False。"""
-    for a, b in _CONTRARY_PAIRS:
-        if a in yiche_norm and b in std_media_norm:
-            return False
-        if b in yiche_norm and a in std_media_norm:
-            return False
-    return True
-
-
 def _match_bare(our_series, our_trim, our_msrp, std):
     cs_names = _SERIES_MAP.get(our_series)
     if cs_names is None:
+        # 用车系名直接查（易车车系名可能和标准表名一致）
         cs_names = [our_series]
     cands = []
     for cs in cs_names:
         cands.extend(std.get(cs, []))
     if not cands:
         return None, False
-
-    # 1. 按指导价筛选
     m = [c for c in cands if our_msrp is not None and c["mkt"] == our_msrp]
     if not m:
         return None, True
-
-    # 2. 过滤掉属性矛盾的条目（四驱vs两驱 / 5座vs7座）
-    tn = _norm(our_trim)
-    m = [c for c in m if _trim_compatible(tn, c["media_norm"])]
-    if not m:
-        return None, True  # 全部矛盾 → 标黄
-
-    # 3. 所有兼容条目裸车价相同 → 直接返回
     bares = set(c["bare"] for c in m)
     if len(bares) == 1:
         return m[0]["bare"], True
-
-    # 4. 同指导价下有多种折扣 → 用对应媒体车型相似度选最佳
+    tn = _norm(our_trim)
     best = max(m, key=lambda c: _cjk_overlap(tn, c["media_norm"]))
     return best["bare"], True
 
